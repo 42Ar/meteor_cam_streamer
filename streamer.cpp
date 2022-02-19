@@ -20,7 +20,7 @@ const static string main_config_file = "config.json";
 vector<int> active_cameras;
 int in_size_x, in_size_y;
 int out_size_x, out_size_y;
-bool test_mode;
+bool test_mode, start_stream;
 vector<string> test_images({
     "../starfitter/fit_images/2022_02_13_20_10_01_1.jpg",
     "../starfitter/fit_images/2022_02_13_20_10_01_2.jpg",
@@ -83,8 +83,9 @@ void trim(std::string &s) {
     rtrim(s);
 }
 
-void read_config(){
-    ifstream file(main_config_file);
+void read_config(const string &config_file){
+    cout << "opening main config file " << config_file << endl;
+    ifstream file(config_file);
     if(!file.is_open()){
         cerr << "failed to open main config file " << main_config_file << endl;
         exit(1);
@@ -97,6 +98,7 @@ void read_config(){
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
     test_mode = config["test_mode"];
+    start_stream = config["start_stream"];
     fps = config["fps"];
     string rtmp_url_file = config["rtmp_url_file"];
     ifstream f(rtmp_url_file);
@@ -320,8 +322,12 @@ void process(Mat &dst){
 }
 
 
-int main(){
-    read_config();
+int main(int argc, char *argv[]){
+    string config = main_config_file;
+    if(argc == 2){
+        config = argv[1];
+    }
+    read_config(config);
     Mat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
     if(test_mode){
         for(auto &cam : cams){
@@ -333,21 +339,26 @@ int main(){
     if(test_mode){
         imwrite("output.jpg", dst);
     }
+    if(!start_stream){
+        return 0;
+    }
     stringstream pipeline;
     pipeline << "appsrc ! ";
     pipeline << "video/x-raw, format=BGR, width=" << out_size_x << ", height=" << out_size_y << ", framerate=" << fps << "/1 ! ";
     pipeline << "queue ! ";
     pipeline << "videoconvert ! ";
-    pipeline << "x264enc bitrate=" << bitrate << " byte-stream=false key-int-max=" << fps*2 << " bframes=0 aud=true ! ";
+    pipeline << "x264enc bitrate=" << bitrate << " byte-stream=false key-int-max=" << fps*2 << " bframes=0 aud=true ! "; // key frames must appear every two seconds at max
     pipeline << "video/x-h264,profile=main ! ";
     pipeline << "flvmux streamable=true name=mux ! ";
     pipeline << "rtmpsink location=\"" << rtmp_url << "\" " << endl;
-    pipeline << "audiotestsrc ! voaacenc bitrate=128000 ! mux. " << endl;
+    pipeline << "audiotestsrc wave=4 ! voaacenc bitrate=0 ! mux. " << endl; // add silent dummy audio
     VideoWriter video(pipeline.str(), CAP_GSTREAMER, 0, fps, Size(out_size_x, out_size_y), true); 
     cout << "opened" << endl;
-    for(int i = 0; true; i++){
+    for(int i = 1; true; i++){
+        if(test_mode){
+            cout << "writing frame: " << i << endl;
+        }
         video << dst;
-        cout << i << endl;
     } 
     return 0;
 }
