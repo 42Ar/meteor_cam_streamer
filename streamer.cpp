@@ -338,7 +338,7 @@ int main(){
     pipeline << "video/x-raw, format=BGR, width=" << out_size_x << ", height=" << out_size_y << ", framerate=" << fps << "/1 ! ";
     pipeline << "queue ! ";
     pipeline << "videoconvert ! ";
-    pipeline << "x264enc bitrate=" << bitrate << " byte-stream=false key-int-max=60 bframes=0 aud=true ! ";
+    pipeline << "x264enc bitrate=" << bitrate << " byte-stream=false key-int-max=" << fps*2 << " bframes=0 aud=true ! ";
     pipeline << "video/x-h264,profile=main ! ";
     pipeline << "flvmux streamable=true name=mux ! ";
     pipeline << "rtmpsink location=\"" << rtmp_url << "\" " << endl;
