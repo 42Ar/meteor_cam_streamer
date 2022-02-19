@@ -1,0 +1,29 @@
+{
+    "in_size_x": 1920,
+    "in_size_y": 1080,
+    "out_size_x": 7680,
+    "out_size_y": 4320,
+    "active_cams": [7, 6, 5, 4, 3, 2, 1],
+    "fps": 25,
+    "bitrate": 23500,
+    "rtmp_url_file": "rtmp_url",
+    "test_mode": true,
+    "calib_input_files": [
+        "calib_data/AMS131/fit_1.json",
+        "calib_data/AMS131/fit_2.json",
+        "calib_data/AMS131/fit_3.json",
+        "calib_data/AMS131/fit_4.json",
+        "calib_data/AMS131/fit_5.json",
+        "calib_data/AMS131/fit_6.json",
+        "calib_data/AMS131/fit_7.json"
+    ],
+    "crop": {
+        "1": {"az": [0.8, 2], "alt": [-0.11, 0.7]},
+        "2": {"az": [2, 3.3], "alt": [-0.11, 0.75]},
+        "3": {"az": [3.3, 4.5], "alt": [-0.11, 0.75]},
+        "4": {"az": [4.5, 5.9], "alt": [-0.11, 0.75]},
+        "5": {"az": [5.9, -0.8], "alt": [-0.11, 0.75]},
+        "6": {"az": [6.18, -3.03], "alt": [0.6, 1.5707963267948966]},
+        "7": {"az": [3.03, 6.18], "alt": [0.6, 1.5707963267948966]}
+    }
+}
