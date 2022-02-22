@@ -12,6 +12,7 @@
     "start_stream": true,
     "verbose_mainloop": false,
     "vignette_correction": 1.4,
+    "selected_device": 0,
     "calib_input_files": [
         "calib_data/AMS131/fit_1.json",
         "calib_data/AMS131/fit_2.json",

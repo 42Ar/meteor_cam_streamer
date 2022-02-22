@@ -7,6 +7,7 @@
 #include <opencv2/core/matx.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
+#include <opencv2/core/ocl.hpp>
 #include <limits>
 #include <sstream>
 #include <iomanip>
@@ -28,6 +29,7 @@ int bitrate;
 Mat mask;
 double vignette_correction;
 VideoWriter video;
+int selected_device;
 
 const int OUTSIDE_ROI = -1;
 
@@ -96,6 +98,7 @@ void read_config(const string &config_file){
     out_size_y = config["out_size_y"];
     use_test_images = config["use_test_images"];
     verbose_mainloop = config["verbose_mainloop"];
+    selected_device = config["selected_device"];
     test_mode = config["test_mode"];
     if(test_mode){
         test_output_file = config["test_output_file"];
@@ -397,12 +400,42 @@ void open_pipeline(){
     video.open(pipeline.str(), CAP_GSTREAMER, 0, fps, Size(out_size_x, out_size_y), true); 
 }
 
+void setup_opencl(){
+    ocl::setUseOpenCL(true);
+    if(!ocl::haveOpenCL()){
+        cout << "OpenCL is not available" << endl;
+        return;
+    }
+    cv::ocl::Context context;
+    if(!context.create(ocl::Device::TYPE_GPU)){
+        cout << "failed creating an opencl GPU context" << endl;
+        return;
+    }
+    cout << context.ndevices() << " GPU devices are detected." << endl;
+    for(int i = 0; i < context.ndevices(); i++){
+        ocl::Device device = context.device(i);
+        cout << "=== Device " << i << endl;
+        cout << "name:              " << device.name() << endl;
+        cout << "available:         " << device.available() << endl;
+        cout << "imageSupport:      " << device.imageSupport() << endl;
+        cout << "OpenCL_C_Version:  " << device.OpenCL_C_Version() << endl;
+        cout << endl;
+    }
+    if(selected_device < context.ndevices()){
+        ocl::Device(context.device(selected_device));
+    }else{
+        cout << "selected device index out of range" << endl;
+    }
+}
+
+
 int main(int argc, char *argv[]){
     string config = main_config_file;
     if(argc == 2){
         config = argv[1];
     }
     read_config(config);
+    setup_opencl();
     precalc_brightness_mask();
     precalc_pixel_grids();
     if(!use_test_images){
