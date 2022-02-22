@@ -36,7 +36,7 @@ int selected_device;
 const int OUTSIDE_ROI = -1;
 
 struct camera{
-    Mat src, map_x, map_y, cur_img;
+    UMat src, map_x, map_y, cur_img;
     int id;
     vector<double> c;
     double fov_x, fov_y;
@@ -301,8 +301,8 @@ void precalc_pixel_grids(){
         cam.lower_right.x = int(floor(lower_right[0]));
         cam.lower_right.y = int(floor(lower_right[1]));
         Size size = Size(cam.lower_right - cam.upper_left + Point(1, 1));
-        cam.map_x.create(size, CV_32FC1);
-        cam.map_y.create(size, CV_32FC1);
+        Mat map_x(size, CV_32FC1);
+        Mat map_y(size, CV_32FC1);
         for(int y = 0; y < size.height; y++){
             for(int x = 0; x < size.width; x++){
                 Vec2d s = inverse_project_equirect(cam.upper_left.x + x, cam.upper_left.y + y);
@@ -311,10 +311,14 @@ void precalc_pixel_grids(){
                 if(p[0] < 0 || p[1] < 0 || p[0] > in_size_x - 1 || p[1] > in_size_y - 1){
                     //pixel outside ROI
                 }
-                cam.map_x.at<float>(y, x) = p[0];
-                cam.map_y.at<float>(y, x) = p[1];
+                map_x.at<float>(y, x) = p[0];
+                map_y.at<float>(y, x) = p[1];
             }
         }
+        cam.map_x.create(size, CV_32FC1);
+        map_x.copyTo(cam.map_x);
+        cam.map_y.create(size, CV_32FC1);
+        map_y.copyTo(cam.map_y);
     }
     cout << endl;
 }
@@ -329,35 +333,37 @@ double calc_brightness_correction_val(int x, int y){
 
 void precalc_brightness_mask(){
     cout << "pre calculating brightness mask" << endl;
-    mask.create(in_size_y, in_size_x, CV_8UC3);
+    Mat m(in_size_y, in_size_x, CV_8UC3);
     double corr_max = calc_brightness_correction_val(0, 0);
     mask_scale = corr_max/255;
     for(int y = 0; y < in_size_y; y++){
         for(int x = 0; x < in_size_x; x++){
             double v = round(calc_brightness_correction_val(x, y)/mask_scale);
-            mask.at<Vec3b>(y, x) = Vec3b(v, v, v);
+            m.at<Vec3b>(y, x) = Vec3b(v, v, v);
         }
     }
+    mask.create(in_size_y, in_size_x, CV_8UC3);
+    m.copyTo(mask);
 }
 
 
-void process(Mat &dst){
+void process(UMat &dst){
     for(auto &cam : cams){
         if(enable_vignette_correction){
             multiply(cam.cur_img, mask, cam.cur_img, mask_scale);
         }
         if(cam.lower_right.x >= out_size_x){
-            Mat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
-            Mat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
-            Mat roi_right_map_y(cam.map_y, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_y.size().height));
+            UMat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
+            UMat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
+            UMat roi_right_map_y(cam.map_y, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_y.size().height));
             remap(cam.cur_img, roi_right, roi_right_map_x, roi_right_map_y, INTER_LINEAR, BORDER_TRANSPARENT);
 
-            Mat roi_left(dst, Rect(Point(0, cam.upper_left.y), Point(cam.lower_right.x - out_size_x + 1, cam.lower_right.y + 1)));
-            Mat roi_left_map_x(cam.map_x, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_x.size())));
-            Mat roi_left_map_y(cam.map_y, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_y.size())));
+            UMat roi_left(dst, Rect(Point(0, cam.upper_left.y), Point(cam.lower_right.x - out_size_x + 1, cam.lower_right.y + 1)));
+            UMat roi_left_map_x(cam.map_x, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_x.size())));
+            UMat roi_left_map_y(cam.map_y, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_y.size())));
             remap(cam.cur_img, roi_left, roi_left_map_x, roi_left_map_y, INTER_LINEAR, BORDER_TRANSPARENT);
         }else{
-            Mat roi(dst, Rect(cam.upper_left, cam.lower_right + Point(1, 1)));
+            UMat roi(dst, Rect(cam.upper_left, cam.lower_right + Point(1, 1)));
             remap(cam.cur_img, roi, cam.map_x, cam.map_y, INTER_LINEAR, BORDER_TRANSPARENT);
         }
     }
@@ -383,7 +389,7 @@ void read_frames(){
     }
     for(auto &cam : cams){
         if(use_test_images){
-            cam.cur_img = imread(cam.test_img, IMREAD_COLOR);
+            imread(cam.test_img, IMREAD_COLOR).copyTo(cam.cur_img);
             if(cam.cur_img.empty()){
                 cerr << "failed to read test image " << cam.test_img << endl;
                 exit(1);
@@ -415,7 +421,7 @@ void setup_opencl(){
         cout << "OpenCL is not available" << endl;
         return;
     }
-    cv::ocl::Context context;
+    ocl::Context context;
     if(!context.create(ocl::Device::TYPE_GPU)){
         cout << "failed creating an opencl GPU context" << endl;
         return;
@@ -452,19 +458,22 @@ int main(int argc, char *argv[]){
     if(!use_test_images){
         open_cameras();
     }
-    Mat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    UMat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
     if(start_stream){
         open_pipeline();
     }
     cout << "starting mainloop" << endl;
     double tick_freq = getTickFrequency();
+    int frame = 0;
     while(true){
         int64 start_frame = getTickCount();
         if(verbose_mainloop){
             cout << "reading frames" << endl;
         }
         int64 read_frames_start = getTickCount();
-        read_frames();
+        if(frame == 0 || !use_test_images){
+            read_frames();
+        }
         int64 read_frames_end = getTickCount();
         if(verbose_mainloop){
             cout << "processing frames" << endl;
@@ -494,6 +503,7 @@ int main(int argc, char *argv[]){
              << "process:" << setw(6) << 1e3*(process_frames_end - process_frames_start)/tick_freq << " ms, "
              << "write:" << setw(6) << 1e3*(write_frames_end - write_frames_start)/tick_freq << " ms, "
              << "fps:" << setw(6) << fps << endl;
+        frame++;
     }
     return 0;
 }
