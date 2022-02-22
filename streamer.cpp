@@ -302,8 +302,8 @@ void precalc_pixel_grids(){
         Size size = Size(cam.lower_right - cam.upper_left + Point(1, 1));
         cam.map_x.create(size, CV_32FC1);
         cam.map_y.create(size, CV_32FC1);
-        for(int x = 0; x < size.width; x++){
-            for(int y = 0; y < size.height; y++){
+        for(int y = 0; y < size.height; y++){
+            for(int x = 0; x < size.width; x++){
                 Vec2d s = inverse_project_equirect(cam.upper_left.x + x, cam.upper_left.y + y);
                 Vec3d v = spherical_to_cartesian(s);
                 Vec2d p = vec_to_pixel(cam, v);
@@ -321,8 +321,8 @@ void precalc_pixel_grids(){
 void precalc_brightness_mask(){
     cout << "pre calculating brightness mask" << endl;
     mask.create(in_size_y, in_size_x, CV_32FC1);
-    for(int x = 0; x < in_size_x; x++){
-        for(int y = 0; y < in_size_y; y++){
+    for(int y = 0; y < in_size_y; y++){
+        for(int x = 0; x < in_size_x; x++){
             float xd = (x - (in_size_x - 1)/2.0)/((in_size_x - 1)/2.0);
             float yd = (y - (in_size_y - 1)/2.0)/((in_size_x - 1)/2.0);
             float r = sqrt(xd*xd + yd*yd);
@@ -335,8 +335,8 @@ void precalc_brightness_mask(){
 void process(Mat &dst){
     for(auto &cam : cams){
         if(enable_vignette_correction){
-            for(int x = 0; x < in_size_x; x++){
-                for(int y = 0; y < in_size_y; y++){
+            for(int y = 0; y < in_size_y; y++){
+                for(int x = 0; x < in_size_x; x++){
                     cam.cur_img.at<Vec3b>(y, x) *= mask.at<float>(y, x);
                 }
             }
