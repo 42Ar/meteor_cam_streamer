@@ -406,21 +406,36 @@ int main(int argc, char *argv[]){
         open_pipeline();
     }
     cout << "starting mainloop" << endl;
+    double tick_freq = getTickFrequency();
     while(true){
+        int64 start_frame = getTickCount();
         cout << "reading frames" << endl;
+        int64 read_frames_start = getTickCount();
         read_frames();
+        int64 read_frames_end = getTickCount();
         cout << "processing frames" << endl;
+        int64 process_frames_start = getTickCount();
         process(dst);
+        int64 process_frames_end = getTickCount();
         if(test_mode){
             imwrite(test_output_file, dst);
             imshow("output", dst);
             while(waitKey() != 'q');
             destroyAllWindows();
         }
+        int64 write_frames_start = 0, write_frames_end = 0;
         if(start_stream){
             cout << "writing frame" << endl;
+            write_frames_start = getTickCount();
             video << dst;
+            write_frames_end = getTickCount();
         }
+        int64 end_frame = getTickCount();
+        double fps = tick_freq/(end_frame - start_frame);
+        cout << "read: " << 1e3*(read_frames_end - read_frames_start)/tick_freq << " ms, "
+             << "process: " << 1e3*(process_frames_end - process_frames_start)/tick_freq << " ms, "
+             << "write: " << 1e3*(write_frames_end - write_frames_start)/tick_freq << " ms, "
+             << "fps: " << fps << endl;
     }
     return 0;
 }
