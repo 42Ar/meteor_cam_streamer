@@ -26,6 +26,7 @@ int fps;
 int bitrate;
 Mat mask;
 double vignette_correction;
+VideoWriter video;
 
 const int OUTSIDE_ROI = -1;
 
@@ -374,6 +375,21 @@ void read_frames(){
     }
 }
 
+void open_pipeline(){
+    cout << "opening pipline" << endl;
+    stringstream pipeline;
+    pipeline << "appsrc ! ";
+    pipeline << "video/x-raw, format=BGR, width=" << out_size_x << ", height=" << out_size_y << ", framerate=" << fps << "/1 ! ";
+    pipeline << "queue ! ";
+    pipeline << "videoconvert ! ";
+    pipeline << "x264enc bitrate=" << bitrate << " byte-stream=false key-int-max=" << fps*2 << " bframes=0 aud=true ! "; // key frames must appear every two seconds at max
+    pipeline << "video/x-h264,profile=main ! ";
+    pipeline << "flvmux streamable=true name=mux ! ";
+    pipeline << "rtmpsink location=\"" << rtmp_url << "\" " << endl;
+    pipeline << "audiotestsrc wave=4 ! voaacenc bitrate=0 ! mux. " << endl; // add silent dummy audio
+    video.open(pipeline.str(), CAP_GSTREAMER, 0, fps, Size(out_size_x, out_size_y), true); 
+}
+
 int main(int argc, char *argv[]){
     string config = main_config_file;
     if(argc == 2){
@@ -386,34 +402,25 @@ int main(int argc, char *argv[]){
         open_cameras();
     }
     Mat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
-    read_frames();
-    process(dst);
-    if(test_mode){
-        imwrite(test_output_file, dst);
-        imshow("output", dst);
-        while(waitKey() != 'q');
-        destroyAllWindows();
+    if(start_stream){
+        open_pipeline();
     }
-    if(!start_stream){
-        return 0;
-    }
-    stringstream pipeline;
-    pipeline << "appsrc ! ";
-    pipeline << "video/x-raw, format=BGR, width=" << out_size_x << ", height=" << out_size_y << ", framerate=" << fps << "/1 ! ";
-    pipeline << "queue ! ";
-    pipeline << "videoconvert ! ";
-    pipeline << "x264enc bitrate=" << bitrate << " byte-stream=false key-int-max=" << fps*2 << " bframes=0 aud=true ! "; // key frames must appear every two seconds at max
-    pipeline << "video/x-h264,profile=main ! ";
-    pipeline << "flvmux streamable=true name=mux ! ";
-    pipeline << "rtmpsink location=\"" << rtmp_url << "\" " << endl;
-    pipeline << "audiotestsrc wave=4 ! voaacenc bitrate=0 ! mux. " << endl; // add silent dummy audio
-    VideoWriter video(pipeline.str(), CAP_GSTREAMER, 0, fps, Size(out_size_x, out_size_y), true); 
-    cout << "opened" << endl;
-    for(int i = 1; true; i++){
+    cout << "starting mainloop" << endl;
+    while(true){
+        cout << "reading frames" << endl;
+        read_frames();
+        cout << "processing frames" << endl;
+        process(dst);
         if(test_mode){
-            cout << "writing frame: " << i << endl;
+            imwrite(test_output_file, dst);
+            imshow("output", dst);
+            while(waitKey() != 'q');
+            destroyAllWindows();
         }
-        video << dst;
-    } 
+        if(start_stream){
+            cout << "writing frame" << endl;
+            video << dst;
+        }
+    }
     return 0;
 }
