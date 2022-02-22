@@ -28,6 +28,7 @@ int fps;
 int bitrate;
 Mat mask;
 double vignette_correction;
+bool enable_vignette_correction;
 VideoWriter video;
 int selected_device;
 
@@ -106,6 +107,7 @@ void read_config(const string &config_file){
     start_stream = config["start_stream"];
     fps = config["fps"];
     vignette_correction = config["vignette_correction"];
+    enable_vignette_correction = config["enable_vignette_correction"];
     if(start_stream){
         string rtmp_url_file = config["rtmp_url_file"];
         ifstream f(rtmp_url_file);
@@ -332,9 +334,11 @@ void precalc_brightness_mask(){
 
 void process(Mat &dst){
     for(auto &cam : cams){
-        for(int x = 0; x < in_size_x; x++){
-            for(int y = 0; y < in_size_y; y++){
-                cam.cur_img.at<Vec3b>(y, x) *= mask.at<float>(y, x);
+        if(enable_vignette_correction){
+            for(int x = 0; x < in_size_x; x++){
+                for(int y = 0; y < in_size_y; y++){
+                    cam.cur_img.at<Vec3b>(y, x) *= mask.at<float>(y, x);
+                }
             }
         }
         if(cam.lower_right.x >= out_size_x){
@@ -436,7 +440,9 @@ int main(int argc, char *argv[]){
     }
     read_config(config);
     setup_opencl();
-    precalc_brightness_mask();
+    if(enable_vignette_correction){
+        precalc_brightness_mask();
+    }
     precalc_pixel_grids();
     if(!use_test_images){
         open_cameras();
