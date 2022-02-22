@@ -30,9 +30,11 @@ vector<string> test_images({
     "../starfitter/fit_images/2022_02_13_20_10_00_6.jpg",
     "../starfitter/fit_images/2022_02_13_20_10_02_7.jpg"
 });
-string rtmp_url;
+string rtmp_url, test_output_file;
 int fps;
 int bitrate;
+Mat mask;
+double vignette_correction;
 
 const int OUTSIDE_ROI = -1;
 
@@ -98,19 +100,25 @@ void read_config(const string &config_file){
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
     test_mode = config["test_mode"];
+    if(test_mode){
+        test_output_file = config["test_output_file"];
+    }
     start_stream = config["start_stream"];
     fps = config["fps"];
-    string rtmp_url_file = config["rtmp_url_file"];
-    ifstream f(rtmp_url_file);
-    if(!f.is_open()){
-        cerr << "failed to open file containing rtmp url: " << rtmp_url_file << endl;
-        exit(1);
+    vignette_correction = config["vignette_correction"];
+    if(start_stream){
+        string rtmp_url_file = config["rtmp_url_file"];
+        ifstream f(rtmp_url_file);
+        if(!f.is_open()){
+            cerr << "failed to open file containing rtmp url: " << rtmp_url_file << endl;
+            exit(1);
+        }
+        stringstream buffer;
+        buffer << f.rdbuf();
+        f.close();
+        rtmp_url = buffer.str();
+        trim(rtmp_url);
     }
-    stringstream buffer;
-    buffer << f.rdbuf();
-    f.close();
-    rtmp_url = buffer.str();
-    trim(rtmp_url);
     bitrate = config["bitrate"];
     for(auto id : config["active_cams"]){
         cams.push_back(camera(id));
@@ -294,9 +302,22 @@ void precalc_pixel_grids(){
                 if(p[0] < 0 || p[1] < 0 || p[0] > in_size_x - 1 || p[1] > in_size_y - 1){
                     //pixel outside ROI
                 }
-                cam.map_x.at<float>(y, x%out_size_x) = p[0];
-                cam.map_y.at<float>(y, x%out_size_x) = p[1];
+                cam.map_x.at<float>(y, x) = p[0];
+                cam.map_y.at<float>(y, x) = p[1];
             }
+        }
+    }
+}
+
+void precalc_brightness_mask(){
+    cout << "pre calculating brightness mask" << endl;
+    mask.create(in_size_y, in_size_x, CV_32FC1);
+    for(int x = 0; x < in_size_x; x++){
+        for(int y = 0; y < in_size_y; y++){
+            float xd = (x - (in_size_x - 1)/2.0)/((in_size_x - 1)/2.0);
+            float yd = (y - (in_size_y - 1)/2.0)/((in_size_x - 1)/2.0);
+            float r = sqrt(xd*xd + yd*yd);
+            mask.at<float>(y, x) = 1/cos(atan(r/vignette_correction));
         }
     }
 }
@@ -304,6 +325,11 @@ void precalc_pixel_grids(){
 
 void process(Mat &dst){
     for(auto &cam : cams){
+        for(int x = 0; x < in_size_x; x++){
+            for(int y = 0; y < in_size_y; y++){
+                cam.cur_img.at<Vec3b>(y, x) *= mask.at<float>(y, x);
+            }
+        }
         if(cam.lower_right.x >= out_size_x){
             Mat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
             Mat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
@@ -334,10 +360,14 @@ int main(int argc, char *argv[]){
             cam.cur_img = imread(test_images[cam.id - 1], IMREAD_COLOR);
         }
     }
+    precalc_brightness_mask();
     precalc_pixel_grids();
     process(dst);
     if(test_mode){
-        imwrite("output.jpg", dst);
+        imwrite(test_output_file, dst);
+        imshow("output", dst);
+        while(waitKey() != 'q');
+        destroyAllWindows();
     }
     if(!start_stream){
         return 0;

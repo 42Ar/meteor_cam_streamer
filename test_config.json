@@ -8,7 +8,9 @@
     "bitrate": 23500,
     "rtmp_url_file": "rtmp_url",
     "test_mode": true,
+    "test_output_file": "output.jpg",
     "start_stream": false,
+    "vignette_correction": 1000000000000.3,
     "calib_input_files": [
         "calib_data/AMS131/fit_1.json",
         "calib_data/AMS131/fit_2.json",
