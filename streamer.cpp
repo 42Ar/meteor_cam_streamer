@@ -9,6 +9,7 @@
 #include <opencv2/highgui.hpp>
 #include <limits>
 #include <sstream>
+#include <iomanip>
 
 using namespace std;
 using namespace nlohmann;
@@ -20,7 +21,7 @@ const static string main_config_file = "config.json";
 vector<int> active_cameras;
 int in_size_x, in_size_y;
 int out_size_x, out_size_y;
-bool test_mode, start_stream, use_test_images;
+bool test_mode, start_stream, use_test_images, verbose_mainloop;
 string rtmp_url, test_output_file;
 int fps;
 int bitrate;
@@ -94,6 +95,7 @@ void read_config(const string &config_file){
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
     use_test_images = config["use_test_images"];
+    verbose_mainloop = config["verbose_mainloop"];
     test_mode = config["test_mode"];
     if(test_mode){
         test_output_file = config["test_output_file"];
@@ -275,8 +277,9 @@ Vec3d spherical_to_cartesian(Vec2d az_alt){
 }
 
 void precalc_pixel_grids(){
+    cout << "pre calculating grid for camera:" << flush;
     for(auto &cam : cams){
-        cout << "pre calculating grid for camera " << cam.id << endl;
+        cout << " " << cam.id << flush;
         cam.M = Rz(cam.az)*Rx(M_PI_2 - cam.alt)*Rz(cam.roll);
         int test_x = 55, test_y = 21;
         Vec3d test_v = pixel_to_vec(cams[0], test_x, test_y);
@@ -307,6 +310,7 @@ void precalc_pixel_grids(){
             }
         }
     }
+    cout << endl;
 }
 
 void precalc_brightness_mask(){
@@ -348,12 +352,15 @@ void process(Mat &dst){
 }
 
 void open_cameras(){
+    cout << "opening camera:" << flush;
     for(auto &cam : cams){
+        cout << " " << cam.id << flush;
         if(!cam.cap.open(cam.url)){
             cerr << "failed to open camera " << cam.id << endl;
             exit(1);
         }
     }
+    cout << endl;
 }
 
 void read_frames(){
@@ -409,11 +416,15 @@ int main(int argc, char *argv[]){
     double tick_freq = getTickFrequency();
     while(true){
         int64 start_frame = getTickCount();
-        cout << "reading frames" << endl;
+        if(verbose_mainloop){
+            cout << "reading frames" << endl;
+        }
         int64 read_frames_start = getTickCount();
         read_frames();
         int64 read_frames_end = getTickCount();
-        cout << "processing frames" << endl;
+        if(verbose_mainloop){
+            cout << "processing frames" << endl;
+        }
         int64 process_frames_start = getTickCount();
         process(dst);
         int64 process_frames_end = getTickCount();
@@ -425,17 +436,20 @@ int main(int argc, char *argv[]){
         }
         int64 write_frames_start = 0, write_frames_end = 0;
         if(start_stream){
-            cout << "writing frame" << endl;
+            if(verbose_mainloop){
+                cout << "writing frame" << endl;
+            }
             write_frames_start = getTickCount();
             video << dst;
             write_frames_end = getTickCount();
         }
         int64 end_frame = getTickCount();
         double fps = tick_freq/(end_frame - start_frame);
-        cout << "read: " << 1e3*(read_frames_end - read_frames_start)/tick_freq << " ms, "
-             << "process: " << 1e3*(process_frames_end - process_frames_start)/tick_freq << " ms, "
-             << "write: " << 1e3*(write_frames_end - write_frames_start)/tick_freq << " ms, "
-             << "fps: " << fps << endl;
+        cout << setiosflags(ios::fixed) << setprecision(1);
+        cout << "read:" << setw(6) << 1e3*(read_frames_end - read_frames_start)/tick_freq << " ms, "
+             << "process:" << setw(6) << 1e3*(process_frames_end - process_frames_start)/tick_freq << " ms, "
+             << "write:" << setw(6) << 1e3*(write_frames_end - write_frames_start)/tick_freq << " ms, "
+             << "fps:" << setw(6) << fps << endl;
     }
     return 0;
 }

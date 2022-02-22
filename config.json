@@ -10,6 +10,7 @@
     "test_mode": false,
     "use_test_images": false,
     "start_stream": true,
+    "verbose_mainloop": false,
     "vignette_correction": 1.4,
     "calib_input_files": [
         "calib_data/AMS131/fit_1.json",
