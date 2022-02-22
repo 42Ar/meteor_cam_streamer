@@ -20,16 +20,7 @@ const static string main_config_file = "config.json";
 vector<int> active_cameras;
 int in_size_x, in_size_y;
 int out_size_x, out_size_y;
-bool test_mode, start_stream;
-vector<string> test_images({
-    "../starfitter/fit_images/2022_02_13_20_10_01_1.jpg",
-    "../starfitter/fit_images/2022_02_13_20_10_01_2.jpg",
-    "../starfitter/fit_images/2022_02_13_20_10_00_3.jpg",
-    "../starfitter/fit_images/2022_02_13_20_10_00_4.jpg",
-    "../starfitter/fit_images/2022_02_13_20_10_00_5.jpg",
-    "../starfitter/fit_images/2022_02_13_20_10_00_6.jpg",
-    "../starfitter/fit_images/2022_02_13_20_10_02_7.jpg"
-});
+bool test_mode, start_stream, use_test_images;
 string rtmp_url, test_output_file;
 int fps;
 int bitrate;
@@ -49,7 +40,7 @@ struct camera{
     Point upper_left, lower_right;
     Matx33d M;
     json calib;
-    string url;
+    string url, test_img;
     VideoCapture cap;
 
     camera(int id):id(id){}
@@ -101,6 +92,7 @@ void read_config(const string &config_file){
     in_size_y = config["in_size_y"];
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
+    use_test_images = config["use_test_images"];
     test_mode = config["test_mode"];
     if(test_mode){
         test_output_file = config["test_output_file"];
@@ -165,7 +157,11 @@ void read_config(const string &config_file){
             cerr << "please add configuration for camera " << cam.id << endl;
             exit(1);
         }
-        cam.url = cam_inf["url"];
+        if(use_test_images){
+            cam.test_img = cam_inf["test_img"];
+        }else{
+            cam.url = cam_inf["url"];
+        }
         for(int i = 0; i < 2; i++){
             cam.crop_az[i] = cam_inf["crop_az"][i];
             cam.crop_alt[i] = cam_inf["crop_alt"][i];
@@ -360,14 +356,18 @@ void open_cameras(){
 }
 
 void read_frames(){
-    if(!test_mode){
+    if(!use_test_images){
         for(auto &cam : cams){
             cam.cap.grab();
         }
     }
     for(auto &cam : cams){
-        if(test_mode){
-            cam.cur_img = imread(test_images[cam.id - 1], IMREAD_COLOR);
+        if(use_test_images){
+            cam.cur_img = imread(cam.test_img, IMREAD_COLOR);
+            if(cam.cur_img.empty()){
+                cerr << "failed to read test image " << cam.test_img << endl;
+                exit(1);
+            }
         }else{
             cam.cap.retrieve(cam.cur_img);
         }
@@ -382,7 +382,7 @@ int main(int argc, char *argv[]){
     read_config(config);
     precalc_brightness_mask();
     precalc_pixel_grids();
-    if(!test_mode){
+    if(!use_test_images){
         open_cameras();
     }
     Mat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
