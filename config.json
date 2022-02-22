@@ -19,13 +19,39 @@
         "calib_data/AMS131/fit_6.json",
         "calib_data/AMS131/fit_7.json"
     ],
-    "crop": {
-        "1": {"az": [0.8, 2], "alt": [-0.11, 0.7]},
-        "2": {"az": [2, 3.3], "alt": [-0.11, 0.75]},
-        "3": {"az": [3.3, 4.5], "alt": [-0.11, 0.75]},
-        "4": {"az": [4.5, 5.9], "alt": [-0.11, 0.75]},
-        "5": {"az": [5.9, -0.8], "alt": [-0.11, 0.75]},
-        "6": {"az": [6.18, -3.03], "alt": [0.6, 1.5707963267948966]},
-        "7": {"az": [3.03, 6.18], "alt": [0.6, 1.5707963267948966]}
+    "cameras": {
+        "1": {
+            "url": "rtsp://127.0.0.1:7771/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [0.8, 2],
+            "crop_alt": [-0.11, 0.7]
+        },
+        "2": {
+            "url": "rtsp://127.0.0.1:7772/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [2, 3.3], "crop_alt": [-0.11, 0.75]},
+        "3": {
+            "url": "rtsp://127.0.0.1:7773/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [3.3, 4.5],
+            "crop_alt": [-0.11, 0.75]
+        },
+        "4": {
+            "url": "rtsp://127.0.0.1:7774/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [4.5, 5.9],
+            "crop_alt": [-0.11, 0.75]
+        },
+        "5": {
+            "url": "rtsp://127.0.0.1:7775/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [5.9, -0.8],
+            "crop_alt": [-0.11, 0.75]
+        },
+        "6": {
+            "url": "rtsp://127.0.0.1:7776/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [6.18, -3.03],
+            "crop_alt": [0.6, 1.5707963267948966]
+        },
+        "7": {
+            "url": "rtsp://127.0.0.1:7777/user=admin&password=&channel=1&stream=0.sdp",
+            "crop_az": [3.03, 6.18],
+            "crop_alt": [0.6, 1.5707963267948966]
+        }
     }
 }

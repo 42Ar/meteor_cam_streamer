@@ -49,6 +49,8 @@ struct camera{
     Point upper_left, lower_right;
     Matx33d M;
     json calib;
+    string url;
+    VideoCapture cap;
 
     camera(int id):id(id){}
 };
@@ -158,38 +160,39 @@ void read_config(const string &config_file){
             cam.c.push_back(cam.calib["c_" + to_string(order)]);
             order += 1;
         }
-        json crop = config["crop"][to_string(cam.id)];
-        if(crop.is_null()){
-            cerr << "please add crop info form camera " << cam.id << endl;
+        json cam_inf = config["cameras"][to_string(cam.id)];
+        if(cam_inf.is_null()){
+            cerr << "please add configuration for camera " << cam.id << endl;
             exit(1);
         }
+        cam.url = cam_inf["url"];
         for(int i = 0; i < 2; i++){
-            cam.crop_az[i] = crop["az"][i];
-            cam.crop_alt[i] = crop["alt"][i];
+            cam.crop_az[i] = cam_inf["crop_az"][i];
+            cam.crop_alt[i] = cam_inf["crop_alt"][i];
         }
         if(cam.crop_az[1] < 0){
             cam.crop_az[1] = 2*M_PI - cam.crop_az[1];
         }
         if(cam.crop_az[0] < 0 || cam.crop_az[0] > 2*M_PI){
-            cerr << "az crop[0] of camera " << cam.id << " out of range" << endl;
+            cerr << "crop_az[0] of camera " << cam.id << " out of range" << endl;
             exit(1);
         }
         if(cam.crop_az[1] < 0 || cam.crop_az[1] > 4*M_PI){
-            cerr << "az crop[1] of camera " << cam.id << " out of range" << endl;
+            cerr << "crop_az[1] of camera " << cam.id << " out of range" << endl;
             exit(1);
         }
         if(cam.crop_az[1] <= cam.crop_az[0]){
-            cerr << "az crop[0] <= crop[1] for camera " << cam.id << endl;
+            cerr << "crop_az[0] <= crop_az[1] for camera " << cam.id << endl;
             exit(1);
         }
         for(int i = 0; i < 2; i++){
             if(cam.crop_alt[i] < -M_PI_2 || cam.crop_alt[i] > M_PI_2){
-                cerr << "alt crop[" << i << "] of camera " << cam.id << " out of range" << endl;
+                cerr << "crop_alt[" << i << "] of camera " << cam.id << " out of range" << endl;
                 exit(1);
             }
         }
         if(cam.crop_alt[0] >= cam.crop_alt[1]){
-            cerr << "alt crop[0] >= crop[1] for camera " << cam.id << endl;
+            cerr << "crop_alt[0] >= crop_alt[1] for camera " << cam.id << endl;
             exit(1);
         }
     }
@@ -347,6 +350,29 @@ void process(Mat &dst){
     }
 }
 
+void open_cameras(){
+    for(auto &cam : cams){
+        if(!cam.cap.open(cam.url)){
+            cerr << "failed to open camera " << cam.id << endl;
+            exit(1);
+        }
+    }
+}
+
+void read_frames(){
+    if(!test_mode){
+        for(auto &cam : cams){
+            cam.cap.grab();
+        }
+    }
+    for(auto &cam : cams){
+        if(test_mode){
+            cam.cur_img = imread(test_images[cam.id - 1], IMREAD_COLOR);
+        }else{
+            cam.cap.retrieve(cam.cur_img);
+        }
+    }
+}
 
 int main(int argc, char *argv[]){
     string config = main_config_file;
@@ -354,14 +380,13 @@ int main(int argc, char *argv[]){
         config = argv[1];
     }
     read_config(config);
-    Mat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
-    if(test_mode){
-        for(auto &cam : cams){
-            cam.cur_img = imread(test_images[cam.id - 1], IMREAD_COLOR);
-        }
-    }
     precalc_brightness_mask();
     precalc_pixel_grids();
+    if(!test_mode){
+        open_cameras();
+    }
+    Mat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    read_frames();
     process(dst);
     if(test_mode){
         imwrite(test_output_file, dst);
