@@ -27,6 +27,7 @@ string rtmp_url, test_output_file;
 int fps;
 int bitrate;
 Mat mask;
+double mask_scale;
 double vignette_correction;
 bool enable_vignette_correction;
 VideoWriter video;
@@ -318,15 +319,23 @@ void precalc_pixel_grids(){
     cout << endl;
 }
 
+double calc_brightness_correction_val(int x, int y){
+    float xd = (x - (in_size_x - 1)/2.0)/((in_size_x - 1)/2.0);
+    float yd = (y - (in_size_y - 1)/2.0)/((in_size_x - 1)/2.0);
+    float r = sqrt(xd*xd + yd*yd);
+    return 1/cos(atan(r/vignette_correction));
+
+}
+
 void precalc_brightness_mask(){
     cout << "pre calculating brightness mask" << endl;
-    mask.create(in_size_y, in_size_x, CV_32FC1);
+    mask.create(in_size_y, in_size_x, CV_8UC3);
+    double corr_max = calc_brightness_correction_val(0, 0);
+    mask_scale = corr_max/255;
     for(int y = 0; y < in_size_y; y++){
         for(int x = 0; x < in_size_x; x++){
-            float xd = (x - (in_size_x - 1)/2.0)/((in_size_x - 1)/2.0);
-            float yd = (y - (in_size_y - 1)/2.0)/((in_size_x - 1)/2.0);
-            float r = sqrt(xd*xd + yd*yd);
-            mask.at<float>(y, x) = 1/cos(atan(r/vignette_correction));
+            double v = round(calc_brightness_correction_val(x, y)/mask_scale);
+            mask.at<Vec3b>(y, x) = Vec3b(v, v, v);
         }
     }
 }
@@ -335,11 +344,7 @@ void precalc_brightness_mask(){
 void process(Mat &dst){
     for(auto &cam : cams){
         if(enable_vignette_correction){
-            for(int y = 0; y < in_size_y; y++){
-                for(int x = 0; x < in_size_x; x++){
-                    cam.cur_img.at<Vec3b>(y, x) *= mask.at<float>(y, x);
-                }
-            }
+            multiply(cam.cur_img, mask, cam.cur_img, mask_scale);
         }
         if(cam.lower_right.x >= out_size_x){
             Mat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
