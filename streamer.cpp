@@ -394,7 +394,9 @@ void read_frames(){
                 exit(1);
             }
         }else{
-            cam.cap.retrieve(cam.cur_img);
+            static Mat ret_img;
+            cam.cap.retrieve(ret_img);
+            cam.cur_img.upload(ret_img);
         }
     }
 }
