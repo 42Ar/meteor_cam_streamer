@@ -3,6 +3,8 @@
     "in_size_y": 1080,
     "out_size_x": 1920,
     "out_size_y": 1080,
+    "alt_start": -0.7,
+    "alt_end": 1.51,
     "active_cams": [7, 6, 5, 4, 3, 2, 1],
     "fps": 10,
     "bitrate": 5000,
@@ -57,13 +59,13 @@
         "6": {
             "url": "rtsp://127.0.0.1:7776/user=admin&password=&channel=1&stream=0.sdp",
             "crop_az": [6.18, -3.03],
-            "crop_alt": [0.7, 1.5707963267948966],
+            "crop_alt": [0.7, 1.51],
             "test_img": "2022_02_13_20_10_00_6.jpg"
         },
         "7": {
             "url": "rtsp://127.0.0.1:7777/user=admin&password=&channel=1&stream=0.sdp",
             "crop_az": [3.03, 6.18],
-            "crop_alt": [0.7, 1.5707963267948966],
+            "crop_alt": [0.7, 1.51],
             "test_img": "2022_02_13_20_10_02_7.jpg"
         }
     }

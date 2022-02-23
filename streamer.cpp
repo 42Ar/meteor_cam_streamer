@@ -29,6 +29,7 @@ int fps;
 int bitrate;
 Mat mask;
 double mask_scale;
+double alt_start, alt_end;
 double vignette_correction;
 bool enable_vignette_correction;
 VideoWriter video;
@@ -106,6 +107,8 @@ void read_config(const string &config_file){
     if(test_mode){
         test_output_file = config["test_output_file"];
     }
+    alt_start = config["alt_start"];
+    alt_end = config["alt_end"];
     start_stream = config["start_stream"];
     fps = config["fps"];
     vignette_correction = config["vignette_correction"];
@@ -268,13 +271,15 @@ Vec2d vec_to_pixel(const camera &cam, const Vec3d &vec){
 
 Vec2d inverse_project_equirect(int px, int py){
     double az = 2*M_PI*double(px)/out_size_x;
-    double alt = -M_PI*(double(py)/(out_size_y - 1) - 0.5);
+    double alt_norm = double(py)/(out_size_y - 1);
+    double alt = alt_end*(1.0 - alt_norm) + alt_start*alt_norm;
     return Vec2d(az, alt);
 
 }
 
 Vec2d project_equirect(Vec2d az_alt){
-    return Vec2d(az_alt[0]*out_size_x/(2*M_PI), (0.5 - az_alt[1]/M_PI)*(out_size_y - 1));
+    double alt_norm = (alt_end - az_alt[1])/(alt_end - alt_start);
+    return Vec2d(az_alt[0]*out_size_x/(2*M_PI), alt_norm*(out_size_y - 1));
 }
 
 Vec3d spherical_to_cartesian(Vec2d az_alt){
