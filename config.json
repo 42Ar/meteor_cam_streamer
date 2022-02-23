@@ -5,6 +5,7 @@
     "out_size_y": 1080,
     "alt_start": -0.7,
     "alt_end": 1.51,
+    "az_offset": 0.785398163397,
     "active_cams": [7, 6, 5, 4, 3, 2, 1],
     "fps": 10,
     "bitrate": 5000,

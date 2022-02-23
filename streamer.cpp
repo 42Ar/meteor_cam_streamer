@@ -31,6 +31,7 @@ Mat mask;
 double mask_scale;
 double alt_start, alt_end;
 double vignette_correction;
+double az_offset;
 bool enable_vignette_correction;
 VideoWriter video;
 int selected_device;
@@ -100,6 +101,7 @@ void read_config(const string &config_file){
     in_size_y = config["in_size_y"];
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
+    az_offset = config["az_offset"];
     use_test_images = config["use_test_images"];
     verbose_mainloop = config["verbose_mainloop"];
     selected_device = config["selected_device"];
@@ -273,13 +275,13 @@ Vec2d inverse_project_equirect(int px, int py){
     double az = 2*M_PI*double(px)/out_size_x;
     double alt_norm = double(py)/(out_size_y - 1);
     double alt = alt_end*(1.0 - alt_norm) + alt_start*alt_norm;
-    return Vec2d(az, alt);
+    return Vec2d((az - az_offset), alt);
 
 }
 
 Vec2d project_equirect(Vec2d az_alt){
     double alt_norm = (alt_end - az_alt[1])/(alt_end - alt_start);
-    return Vec2d(az_alt[0]*out_size_x/(2*M_PI), alt_norm*(out_size_y - 1));
+    return Vec2d((az_alt[0] + az_offset)*out_size_x/(2*M_PI), alt_norm*(out_size_y - 1));
 }
 
 Vec3d spherical_to_cartesian(Vec2d az_alt){
@@ -306,6 +308,9 @@ void precalc_pixel_grids(){
         cam.upper_left.y = int(ceil(upper_left[1]));
         cam.lower_right.x = int(floor(lower_right[0]));
         cam.lower_right.y = int(floor(lower_right[1]));
+        int shift = out_size_x*(cam.upper_left.x/out_size_x);
+        cam.lower_right.x -= shift;
+        cam.upper_left.x -= shift;
         Size size = Size(cam.lower_right - cam.upper_left + Point(1, 1));
         Mat map_x(size, CV_32FC1);
         Mat map_y(size, CV_32FC1);
@@ -433,6 +438,24 @@ void setup_cuda(){
     }
 }
 
+void draw_background(Mat dst){
+    vector<string> t{"N", "E", "S", "W"};
+    double alt = -0.15;
+    Scalar c(200, 200, 200);
+    for(int i = 0; i < 4; i++){
+        double az = M_PI_2*i;
+        Point p0(project_equirect(Vec2d(az, alt)));
+        p0.x %= out_size_x;
+        line(dst, p0, p0 + Point(0, 35), c, 5, LINE_AA);
+        putText(dst, t[i], p0 + Point(-32, 120), FONT_HERSHEY_COMPLEX, 3, c, 5, LINE_AA);
+    }
+    for(int i = 0; i < 36; i++){
+        double az = 2*M_PI*i/36;
+        Point p0(project_equirect(Vec2d(az, alt)));
+        p0.x %= out_size_x;
+        line(dst, p0, p0 + Point(0, 20), c, 3, LINE_AA);
+    }
+}
 
 int main(int argc, char *argv[]){
     string config = main_config_file;
@@ -449,7 +472,10 @@ int main(int argc, char *argv[]){
         open_cameras();
     }
     cuda::GpuMat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    cuda::GpuMat bg(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
     Mat dst_cpu(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    draw_background(dst_cpu);
+    bg.upload(dst_cpu);
     if(start_stream){
         open_pipeline();
     }
@@ -470,6 +496,7 @@ int main(int argc, char *argv[]){
             cout << "processing frames" << endl;
         }
         int64 process_frames_start = getTickCount();
+        bg.copyTo(dst);
         process(dst);
         dst.download(dst_cpu);
         int64 process_frames_end = getTickCount();
