@@ -9,6 +9,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/cudawarping.hpp>
+#include <opencv2/cudaarithm.hpp>
 #include <limits>
 #include <sstream>
 #include <iomanip>
@@ -27,7 +28,6 @@ bool test_mode, start_stream, use_test_images, verbose_mainloop;
 string rtmp_url, test_output_file;
 int fps;
 int bitrate;
-Mat mask;
 double mask_scale;
 double alt_start, alt_end;
 double vignette_correction;
@@ -40,6 +40,7 @@ const int OUTSIDE_ROI = -1;
 
 struct camera{
     cuda::GpuMat src, map_x, map_y, cur_img, dst_roi;
+    Mat decoded_img;
     int id;
     vector<double> c;
     double fov_x, fov_y;
@@ -342,7 +343,7 @@ double calc_brightness_correction_val(int x, int y){
 
 }
 
-void precalc_brightness_mask(){
+void precalc_brightness_mask(cuda::GpuMat &mask){
     cout << "pre calculating brightness mask" << endl;
     Mat m(in_size_y, in_size_x, CV_8UC3);
     double corr_max = calc_brightness_correction_val(0, 0);
@@ -353,14 +354,13 @@ void precalc_brightness_mask(){
             m.at<Vec3b>(y, x) = Vec3b(v, v, v);
         }
     }
-    mask.create(in_size_y, in_size_x, CV_8UC3);
-    m.copyTo(mask);
+    mask.upload(m);
 }
 
-void process(cuda::GpuMat &dst){
+void process(cuda::GpuMat &dst, cuda::GpuMat &mask){
     for(auto &cam : cams){
         if(enable_vignette_correction){
-            multiply(cam.cur_img, mask, cam.cur_img, mask_scale);
+            cuda::multiply(cam.cur_img, mask, cam.cur_img, mask_scale);
         }
         if(cam.lower_right.x >= out_size_x){
             cuda::GpuMat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
@@ -398,16 +398,17 @@ void read_frames(){
     }
     for(auto &cam : cams){
         if(use_test_images){
-            cam.cur_img.upload(imread(cam.test_img, IMREAD_COLOR));
-            if(cam.cur_img.empty()){
-                cerr << "failed to read test image " << cam.test_img << endl;
-                exit(1);
+            if(cam.decoded_img.empty()){
+                cam.decoded_img = imread(cam.test_img, IMREAD_COLOR);
+                if(cam.decoded_img.empty()){
+                    cerr << "failed to read test image " << cam.test_img << endl;
+                    exit(1);
+                }
             }
         }else{
-            static Mat ret_img;
-            cam.cap.retrieve(ret_img);
-            cam.cur_img.upload(ret_img);
+            cam.cap.retrieve(cam.decoded_img);
         }
+        cam.cur_img.upload(cam.decoded_img);
     }
 }
 
@@ -464,8 +465,10 @@ int main(int argc, char *argv[]){
     }
     read_config(config);
     setup_cuda();
+    cuda::GpuMat mask;
     if(enable_vignette_correction){
-        precalc_brightness_mask();
+        mask.create(in_size_y, in_size_x, CV_8UC3);
+        precalc_brightness_mask(mask);
     }
     precalc_pixel_grids();
     if(!use_test_images){
@@ -481,23 +484,20 @@ int main(int argc, char *argv[]){
     }
     cout << "starting mainloop" << endl;
     double tick_freq = getTickFrequency();
-    int frame = 0;
     while(true){
         int64 start_frame = getTickCount();
         if(verbose_mainloop){
             cout << "reading frames" << endl;
         }
         int64 read_frames_start = getTickCount();
-        if(frame == 0 || !use_test_images){
-            read_frames();
-        }
+        read_frames();
         int64 read_frames_end = getTickCount();
         if(verbose_mainloop){
             cout << "processing frames" << endl;
         }
         int64 process_frames_start = getTickCount();
         bg.copyTo(dst);
-        process(dst);
+        process(dst, mask);
         dst.download(dst_cpu);
         int64 process_frames_end = getTickCount();
         if(test_mode){
@@ -522,7 +522,6 @@ int main(int argc, char *argv[]){
              << "process:" << setw(6) << 1e3*(process_frames_end - process_frames_start)/tick_freq << " ms, "
              << "write:" << setw(6) << 1e3*(write_frames_end - write_frames_start)/tick_freq << " ms, "
              << "fps:" << setw(6) << fps << endl;
-        frame++;
     }
     return 0;
 }
