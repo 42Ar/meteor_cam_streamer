@@ -7,7 +7,8 @@
 #include <opencv2/core/matx.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
-#include <opencv2/core/ocl.hpp>
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/cudawarping.hpp>
 #include <limits>
 #include <sstream>
 #include <iomanip>
@@ -36,7 +37,7 @@ int selected_device;
 const int OUTSIDE_ROI = -1;
 
 struct camera{
-    UMat src, map_x, map_y, cur_img;
+    cuda::GpuMat src, map_x, map_y, cur_img, dst_roi;
     int id;
     vector<double> c;
     double fov_x, fov_y;
@@ -316,9 +317,9 @@ void precalc_pixel_grids(){
             }
         }
         cam.map_x.create(size, CV_32FC1);
-        map_x.copyTo(cam.map_x);
+        cam.map_x.upload(map_x);
         cam.map_y.create(size, CV_32FC1);
-        map_y.copyTo(cam.map_y);
+        cam.map_y.upload(map_y);
     }
     cout << endl;
 }
@@ -346,25 +347,23 @@ void precalc_brightness_mask(){
     m.copyTo(mask);
 }
 
-
-void process(UMat &dst){
+void process(cuda::GpuMat &dst){
     for(auto &cam : cams){
         if(enable_vignette_correction){
             multiply(cam.cur_img, mask, cam.cur_img, mask_scale);
         }
         if(cam.lower_right.x >= out_size_x){
-            UMat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
-            UMat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
-            UMat roi_right_map_y(cam.map_y, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_y.size().height));
-            remap(cam.cur_img, roi_right, roi_right_map_x, roi_right_map_y, INTER_LINEAR, BORDER_TRANSPARENT);
-
-            UMat roi_left(dst, Rect(Point(0, cam.upper_left.y), Point(cam.lower_right.x - out_size_x + 1, cam.lower_right.y + 1)));
-            UMat roi_left_map_x(cam.map_x, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_x.size())));
-            UMat roi_left_map_y(cam.map_y, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_y.size())));
-            remap(cam.cur_img, roi_left, roi_left_map_x, roi_left_map_y, INTER_LINEAR, BORDER_TRANSPARENT);
+            cuda::GpuMat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
+	    cuda::GpuMat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
+	    cuda::GpuMat roi_right_map_y(cam.map_y, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_y.size().height));
+	    cuda::remap(cam.cur_img, roi_right, roi_right_map_x, roi_right_map_y, INTER_LINEAR, BORDER_CONSTANT);
+	    cuda::GpuMat roi_left(dst, Rect(Point(0, cam.upper_left.y), Point(cam.lower_right.x - out_size_x + 1, cam.lower_right.y + 1)));
+	    cuda::GpuMat roi_left_map_x(cam.map_x, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_x.size())));
+	    cuda::GpuMat roi_left_map_y(cam.map_y, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_y.size())));
+	    cuda::remap(cam.cur_img, roi_left, roi_left_map_x, roi_left_map_y, INTER_LINEAR, BORDER_CONSTANT);
         }else{
-            UMat roi(dst, Rect(cam.upper_left, cam.lower_right + Point(1, 1)));
-            remap(cam.cur_img, roi, cam.map_x, cam.map_y, INTER_LINEAR, BORDER_TRANSPARENT);
+            cuda::GpuMat roi(dst, Rect(cam.upper_left, cam.lower_right + Point(1, 1)));
+            cuda::remap(cam.cur_img, roi, cam.map_x, cam.map_y, INTER_LINEAR, BORDER_CONSTANT);
         }
     }
 }
@@ -389,7 +388,7 @@ void read_frames(){
     }
     for(auto &cam : cams){
         if(use_test_images){
-            imread(cam.test_img, IMREAD_COLOR).copyTo(cam.cur_img);
+            cam.cur_img.upload(imread(cam.test_img, IMREAD_COLOR));
             if(cam.cur_img.empty()){
                 cerr << "failed to read test image " << cam.test_img << endl;
                 exit(1);
@@ -415,29 +414,13 @@ void open_pipeline(){
     video.open(pipeline.str(), CAP_GSTREAMER, 0, fps, Size(out_size_x, out_size_y), true); 
 }
 
-void setup_opencl(){
-    ocl::setUseOpenCL(true);
-    if(!ocl::haveOpenCL()){
-        cout << "OpenCL is not available" << endl;
-        return;
+void setup_cuda(){
+    int cuda_devices_number = cuda::getCudaEnabledDeviceCount();
+    for(int i = 0; i < cuda_devices_number; i++){
+        cuda::printCudaDeviceInfo(i);
     }
-    ocl::Context context;
-    if(!context.create(ocl::Device::TYPE_GPU)){
-        cout << "failed creating an opencl GPU context" << endl;
-        return;
-    }
-    cout << context.ndevices() << " GPU devices are detected." << endl;
-    for(int i = 0; i < context.ndevices(); i++){
-        ocl::Device device = context.device(i);
-        cout << "=== Device " << i << endl;
-        cout << "name:              " << device.name() << endl;
-        cout << "available:         " << device.available() << endl;
-        cout << "imageSupport:      " << device.imageSupport() << endl;
-        cout << "OpenCL_C_Version:  " << device.OpenCL_C_Version() << endl;
-        cout << endl;
-    }
-    if(selected_device < context.ndevices()){
-        ocl::Device(context.device(selected_device));
+    if(selected_device < cuda_devices_number){
+        cuda::setDevice(selected_device);
     }else{
         cout << "selected device index out of range" << endl;
     }
@@ -450,7 +433,7 @@ int main(int argc, char *argv[]){
         config = argv[1];
     }
     read_config(config);
-    setup_opencl();
+    setup_cuda();
     if(enable_vignette_correction){
         precalc_brightness_mask();
     }
@@ -458,7 +441,8 @@ int main(int argc, char *argv[]){
     if(!use_test_images){
         open_cameras();
     }
-    UMat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    cuda::GpuMat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    Mat dst_cpu(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
     if(start_stream){
         open_pipeline();
     }
@@ -480,10 +464,11 @@ int main(int argc, char *argv[]){
         }
         int64 process_frames_start = getTickCount();
         process(dst);
+        dst.download(dst_cpu);
         int64 process_frames_end = getTickCount();
         if(test_mode){
-            imwrite(test_output_file, dst);
-            imshow("output", dst);
+            imwrite(test_output_file, dst_cpu);
+            imshow("output", dst_cpu);
             while(waitKey() != 'q');
             destroyAllWindows();
         }
@@ -493,7 +478,7 @@ int main(int argc, char *argv[]){
                 cout << "writing frame" << endl;
             }
             write_frames_start = getTickCount();
-            video << dst;
+            video << dst_cpu;
             write_frames_end = getTickCount();
         }
         int64 end_frame = getTickCount();
