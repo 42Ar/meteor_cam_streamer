@@ -331,8 +331,8 @@ Vec2d vec_to_pixel(const camera &cam, const Vec3d &vec){
 }
 
 Vec2d inverse_project_equirect(int px, int py){
-    double az_norm = (double(px) + 0.5)/out_size_x;
-    double alt_norm = double(py + 0.5)/out_size_y;
+    double az_norm = (px + 0.5)/out_size_x;
+    double alt_norm = (py + 0.5)/out_size_y;
     double alt = alt_end*(1.0 - alt_norm) + alt_start*alt_norm;
     return Vec2d(2*M_PI*az_norm - az_offset, alt);
 
@@ -510,23 +510,28 @@ void calc_coverage(){
             batch.mask.release();
         }
     }
+    if(alt_start != -M_PI_2 || alt_end != M_PI_2){
+        cerr << "cannot calculate coverage if global crop is enabled" << endl;
+        return;
+    }
     Mat total_mask_cpu(out_size_y, out_size_x, CV_8UC1);
     total_mask.download(total_mask_cpu);
     double area = 0, area_tot = 0;
     double dy = M_PI/out_size_y;
     for(int y = 0; y < out_size_y; y++){
-        Vec2d az_alt = inverse_project_equirect(0, y);
-        double dx = 2*M_PI*cos(az_alt[1])/out_size_x;
+        double alt = M_PI*(0.5 - (y + 0.5)/out_size_y);
+        double dx = 2*M_PI*cos(alt)/out_size_x;
         int i = 0;
         for(int x = 0; x < out_size_x; x++){
             if(total_mask_cpu.at<unsigned char>(y, x) > 0){
                 i++;
             }
         }
+        double alt_lb = M_PI*(0.5 - (y + 1.0)/out_size_y);
         area_tot += out_size_x*dx*dy;
         area += i*dx*dy;
-        cout << "coverage (at " << az_alt[1]/M_PI*180 << "°): "
-             << area/area_tot*100 << "%, precision: " << area_tot/(4*M_PI)*100 << "%" << endl;
+        cout << "coverage (alt >= " << alt_lb/M_PI*180 << "°): "
+             << area/area_tot*100 << "%, precision: " << area_tot/(2*M_PI*(1 - sin(alt_lb)))*100 << "%" << endl;
     }
 }
 
