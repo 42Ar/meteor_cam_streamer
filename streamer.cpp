@@ -21,7 +21,6 @@ using namespace cv;
 typedef Mat_<double> Matd;
 
 const static string main_config_file = "config.json";
-vector<int> active_cameras;
 int in_size_x, in_size_y;
 int out_size_x, out_size_y;
 bool test_mode, start_stream, use_test_images, verbose_mainloop;
@@ -32,7 +31,7 @@ double mask_scale;
 double alt_start, alt_end;
 double vignette_correction;
 double az_offset;
-bool enable_vignette_correction;
+bool enable_vignette_correction, enable_transparency;
 VideoWriter video;
 int selected_device;
 
@@ -56,7 +55,12 @@ struct camera{
 
     camera(int id):id(id){}
 };
-std::vector<camera> cams;
+struct cam_batch{
+    vector<int> cams;
+    cuda::GpuMat mask;
+};
+vector<cam_batch> cam_batches;
+vector<camera> cams;
 
 int rpoly(double *op, int degree, double *zeror, double *zeroi);
 
@@ -153,8 +157,17 @@ void read_config(const string &config_file){
         rtmp_url = buffer.str();
         trim(rtmp_url);
     }
-    for(auto id : config["active_cams"]){
-        cams.push_back(camera(id));
+    cam_batches.resize(config["active_cams"].size());
+    enable_transparency = config.value("enable_transparency", false);
+    if(enable_transparency && cam_batches.size() == 1){
+        cout << "enabeling transparency makes no sense if there is only one batch" << endl;
+        enable_transparency = false;
+    }
+    for(int i = 0; i < cam_batches.size(); i++){
+        for(auto &id : config["active_cams"][i]){
+            cams.push_back(camera(id));
+            cam_batches[i].cams.push_back(cams.size() - 1);
+        }
     }
     for(auto &calib_file : config["calib_input_files"]){
         ifstream cf(calib_file.get<string>());
@@ -166,7 +179,7 @@ void read_config(const string &config_file){
         json calib_data;
         cf >> calib_data;
         cf.close();
-        for(auto cam_calib : calib_data){
+        for(auto &cam_calib : calib_data){
             int cam_calib_id = cam_calib["id"];
             for(auto &cam : cams){
                 if(cam.id == cam_calib_id){
@@ -368,46 +381,67 @@ Vec2d wrap_az_coord(Vec2d v){
     return v;
 }
 
+void precalc_pixel_grid(camera &cam, Mat mask, bool use_mask){
+    cam.M = Rz(cam.az)*Rx(M_PI_2 - cam.alt)*Rz(cam.roll);
+    int test_x = 55, test_y = 21;
+    Vec3d test_v = pixel_to_vec(cam, test_x, test_y);
+    Vec2d test_ret = vec_to_pixel(cam, test_v);
+    if(abs(test_ret[0] - test_x) > 0.0001 || abs(test_ret[1] - test_y) > 0.0001){
+        cerr << "transform testing failed" << endl;
+        exit(1);
+    }
+    Vec2d upper_left = project_equirect(Vec2d(cam.crop_az[0], cam.crop_alt[1]));
+    Vec2d lower_right = project_equirect(Vec2d(cam.crop_az[1], cam.crop_alt[0]));
+    cam.upper_left.x = round(int(upper_left[0]));
+    cam.upper_left.y = round(int(upper_left[1]));
+    cam.lower_right.x = round(int(lower_right[0]));
+    cam.lower_right.y = round(int(lower_right[1]));
+    int shift = out_size_x*(cam.upper_left.x/out_size_x);
+    cam.lower_right.x -= shift;
+    cam.upper_left.x -= shift;
+    Size size = Size(cam.lower_right - cam.upper_left + Point(1, 1));
+    Mat map_x(size, CV_32FC1);
+    Mat map_y(size, CV_32FC1);
+    for(int y = 0; y < size.height; y++){
+        for(int x = 0; x < size.width; x++){
+            int px = cam.upper_left.x + x;
+            int py = cam.upper_left.y + y;
+            Vec2d s = inverse_project_equirect(px, py);
+            Vec3d v = spherical_to_cartesian(s);
+            Vec2d p = vec_to_pixel(cam, v);
+            if(use_mask && p[0] > 0 && p[1] > 0 && p[0] < in_size_x - 1 && p[1] < in_size_y - 1){
+                mask.at<unsigned char>(py, px) = static_cast<unsigned char>(255);
+            }
+            map_x.at<float>(y, x) = p[0];
+            map_y.at<float>(y, x) = p[1];
+        }
+    }
+    cam.map_x.create(size, CV_32FC1);
+    cam.map_x.upload(map_x);
+    cam.map_y.create(size, CV_32FC1);
+    cam.map_y.upload(map_y);
+}
+
 void precalc_pixel_grids(){
     cout << "pre calculating grid for camera:" << flush;
-    for(auto &cam : cams){
-        cout << " " << cam.id << flush;
-        cam.M = Rz(cam.az)*Rx(M_PI_2 - cam.alt)*Rz(cam.roll);
-        int test_x = 55, test_y = 21;
-        Vec3d test_v = pixel_to_vec(cams[0], test_x, test_y);
-        Vec2d test_ret = vec_to_pixel(cams[0], test_v);
-        if(abs(test_ret[0] - test_x) > 0.0001 || abs(test_ret[1] - test_y) > 0.0001){
-            cerr << "transform testing failed" << endl;
-            exit(1);
+    Mat mask;
+    if(enable_transparency){
+        mask.create(out_size_y, out_size_x, CV_8UC1);
+    }
+    for(int batchi = 0; batchi < cam_batches.size(); batchi++){
+        cam_batch &batch = cam_batches[batchi];
+        bool need_batch_mask = enable_transparency && batchi > 0;
+        if(need_batch_mask){
+            mask = static_cast<unsigned char>(0);
         }
-        Vec2d upper_left = project_equirect(Vec2d(cam.crop_az[0], cam.crop_alt[1]));
-        Vec2d lower_right = project_equirect(Vec2d(cam.crop_az[1], cam.crop_alt[0]));
-        cam.upper_left.x = round(int(upper_left[0]));
-        cam.upper_left.y = round(int(upper_left[1]));
-        cam.lower_right.x = round(int(lower_right[0]));
-        cam.lower_right.y = round(int(lower_right[1]));
-        int shift = out_size_x*(cam.upper_left.x/out_size_x);
-        cam.lower_right.x -= shift;
-        cam.upper_left.x -= shift;
-        Size size = Size(cam.lower_right - cam.upper_left + Point(1, 1));
-        Mat map_x(size, CV_32FC1);
-        Mat map_y(size, CV_32FC1);
-        for(int y = 0; y < size.height; y++){
-            for(int x = 0; x < size.width; x++){
-                Vec2d s = inverse_project_equirect(cam.upper_left.x + x, cam.upper_left.y + y);
-                Vec3d v = spherical_to_cartesian(s);
-                Vec2d p = vec_to_pixel(cam, v);
-                if(p[0] < 0 || p[1] < 0 || p[0] > in_size_x - 1 || p[1] > in_size_y - 1){
-                    //pixel outside ROI
-                }
-                map_x.at<float>(y, x) = p[0];
-                map_y.at<float>(y, x) = p[1];
-            }
+        for(int cam : batch.cams){
+            cout << " " << cams[cam].id << flush;
+            precalc_pixel_grid(cams[cam], mask, need_batch_mask);
         }
-        cam.map_x.create(size, CV_32FC1);
-        cam.map_x.upload(map_x);
-        cam.map_y.create(size, CV_32FC1);
-        cam.map_y.upload(map_y);
+        if(need_batch_mask){
+            batch.mask.create(out_size_y, out_size_x, CV_8UC1);
+            batch.mask.upload(mask);
+        }
     }
     cout << endl;
 }
@@ -433,23 +467,39 @@ void precalc_brightness_mask(cuda::GpuMat &mask){
     mask.upload(m);
 }
 
-void process(cuda::GpuMat &dst, cuda::GpuMat &mask){
-    for(auto &cam : cams){
-        if(enable_vignette_correction){
-            cuda::multiply(cam.cur_img, mask, cam.cur_img, mask_scale);
+void process_cam(const camera &cam, cuda::GpuMat &dst, cuda::GpuMat &vignette_mask){
+    if(enable_vignette_correction){
+        cuda::multiply(cam.cur_img, vignette_mask, cam.cur_img, mask_scale);
+    }
+    if(cam.lower_right.x >= out_size_x){
+        cuda::GpuMat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
+        cuda::GpuMat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
+        cuda::GpuMat roi_right_map_y(cam.map_y, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_y.size().height));
+        cuda::remap(cam.cur_img, roi_right, roi_right_map_x, roi_right_map_y, INTER_LINEAR, BORDER_CONSTANT);
+        cuda::GpuMat roi_left(dst, Rect(Point(0, cam.upper_left.y), Point(cam.lower_right.x - out_size_x + 1, cam.lower_right.y + 1)));
+        cuda::GpuMat roi_left_map_x(cam.map_x, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_x.size())));
+        cuda::GpuMat roi_left_map_y(cam.map_y, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_y.size())));
+        cuda::remap(cam.cur_img, roi_left, roi_left_map_x, roi_left_map_y, INTER_LINEAR, BORDER_CONSTANT);
+    }else{
+        cuda::GpuMat roi(dst, Rect(cam.upper_left, cam.lower_right + Point(1, 1)));
+        cuda::remap(cam.cur_img, roi, cam.map_x, cam.map_y, INTER_LINEAR, BORDER_CONSTANT);
+    }
+}
+
+void process(cuda::GpuMat &dst, cuda::GpuMat &dst_buffer, cuda::GpuMat &vignette_mask){
+    Mat mask;
+    if(enable_transparency > 1){
+        mask.create(out_size_y, out_size_x, CV_8UC1);
+    }
+    for(int batchi = 0; batchi < cam_batches.size(); batchi++){
+        cam_batch &batch = cam_batches[batchi];
+        bool write_to_buffer = enable_transparency && batchi > 0;
+        for(int cam : batch.cams){
+            process_cam(cams[cam], write_to_buffer?dst_buffer:dst, vignette_mask);
         }
-        if(cam.lower_right.x >= out_size_x){
-            cuda::GpuMat roi_right(dst, Rect(cam.upper_left, Point(out_size_x, cam.lower_right.y + 1)));
-            cuda::GpuMat roi_right_map_x(cam.map_x, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_x.size().height));
-            cuda::GpuMat roi_right_map_y(cam.map_y, Rect(0, 0, out_size_x - cam.upper_left.x, cam.map_y.size().height));
-            cuda::remap(cam.cur_img, roi_right, roi_right_map_x, roi_right_map_y, INTER_LINEAR, BORDER_CONSTANT);
-            cuda::GpuMat roi_left(dst, Rect(Point(0, cam.upper_left.y), Point(cam.lower_right.x - out_size_x + 1, cam.lower_right.y + 1)));
-            cuda::GpuMat roi_left_map_x(cam.map_x, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_x.size())));
-            cuda::GpuMat roi_left_map_y(cam.map_y, Rect(Point(out_size_x - cam.upper_left.x, 0), Point(cam.map_y.size())));
-            cuda::remap(cam.cur_img, roi_left, roi_left_map_x, roi_left_map_y, INTER_LINEAR, BORDER_CONSTANT);
-        }else{
-            cuda::GpuMat roi(dst, Rect(cam.upper_left, cam.lower_right + Point(1, 1)));
-            cuda::remap(cam.cur_img, roi, cam.map_x, cam.map_y, INTER_LINEAR, BORDER_CONSTANT);
+        if(write_to_buffer){
+            dst_buffer.copyTo(dst, batch.mask);
+            dst_buffer.setTo(Scalar(0, 0, 0));
         }
     }
 }
@@ -539,16 +589,21 @@ int main(int argc, char *argv[]){
     }
     read_config(config);
     setup_cuda();
-    cuda::GpuMat mask;
+    cuda::GpuMat vignette_mask;
     if(enable_vignette_correction){
-        mask.create(in_size_y, in_size_x, CV_8UC3);
-        precalc_brightness_mask(mask);
+        vignette_mask.create(in_size_y, in_size_x, CV_8UC3);
+        precalc_brightness_mask(vignette_mask);
     }
     precalc_pixel_grids();
     if(!use_test_images){
         open_cameras();
     }
     cuda::GpuMat dst(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
+    cuda::GpuMat dst_buffer;
+    if(enable_transparency){
+        dst_buffer.create(out_size_y, out_size_x, CV_8UC3);
+        dst_buffer.setTo(Scalar(0, 0, 0));
+    }
     cuda::GpuMat bg(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
     Mat dst_cpu(out_size_y, out_size_x, CV_8UC3, Scalar(0, 0, 0));
     draw_background(dst_cpu);
@@ -571,7 +626,7 @@ int main(int argc, char *argv[]){
         }
         int64 process_frames_start = getTickCount();
         bg.copyTo(dst);
-        process(dst, mask);
+        process(dst, dst_buffer, vignette_mask);
         dst.download(dst_cpu);
         int64 process_frames_end = getTickCount();
         if(test_mode){
