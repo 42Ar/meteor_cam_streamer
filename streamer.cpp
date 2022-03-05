@@ -31,7 +31,7 @@ double mask_scale;
 double alt_start, alt_end;
 double vignette_correction;
 double az_offset;
-bool enable_vignette_correction, enable_transparency;
+bool enable_vignette_correction, enable_transparency, calculate_coverage;
 VideoWriter video;
 int selected_device;
 
@@ -115,6 +115,7 @@ void read_config(const string &config_file){
     }
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
+    calculate_coverage = config.value("calculate_coverage", false);
     az_offset = config.value("az_offset", 0);
     use_test_images = config.value("use_test_images", false);
     verbose_mainloop = config.value("verbose_mainloop", false);
@@ -425,12 +426,12 @@ void precalc_pixel_grid(camera &cam, Mat mask, bool use_mask){
 void precalc_pixel_grids(){
     cout << "pre calculating grid for camera:" << flush;
     Mat mask;
-    if(enable_transparency){
+    if(enable_transparency || calculate_coverage){
         mask.create(out_size_y, out_size_x, CV_8UC1);
     }
     for(int batchi = 0; batchi < cam_batches.size(); batchi++){
         cam_batch &batch = cam_batches[batchi];
-        bool need_batch_mask = enable_transparency && batchi > 0;
+        bool need_batch_mask = (enable_transparency && batchi > 0) || calculate_coverage;
         if(need_batch_mask){
             mask = static_cast<unsigned char>(0);
         }
@@ -487,10 +488,6 @@ void process_cam(const camera &cam, cuda::GpuMat &dst, cuda::GpuMat &vignette_ma
 }
 
 void process(cuda::GpuMat &dst, cuda::GpuMat &dst_buffer, cuda::GpuMat &vignette_mask){
-    Mat mask;
-    if(enable_transparency > 1){
-        mask.create(out_size_y, out_size_x, CV_8UC1);
-    }
     for(int batchi = 0; batchi < cam_batches.size(); batchi++){
         cam_batch &batch = cam_batches[batchi];
         bool write_to_buffer = enable_transparency && batchi > 0;
@@ -501,6 +498,35 @@ void process(cuda::GpuMat &dst, cuda::GpuMat &dst_buffer, cuda::GpuMat &vignette
             dst_buffer.copyTo(dst, batch.mask);
             dst_buffer.setTo(Scalar(0, 0, 0));
         }
+    }
+}
+
+void calc_coverage(){
+    cuda::GpuMat total_mask(out_size_y, out_size_x, CV_8UC1, Scalar(0));
+    for(int i = 0; i < cam_batches.size(); i++){
+        cam_batch &batch = cam_batches[i];
+        cuda::bitwise_or(total_mask, batch.mask, total_mask);
+        if(i == 0 || !enable_transparency){
+            batch.mask.release();
+        }
+    }
+    Mat total_mask_cpu(out_size_y, out_size_x, CV_8UC1);
+    total_mask.download(total_mask_cpu);
+    double area = 0, area_tot = 0;
+    double dy = M_PI/out_size_y;
+    for(int y = 0; y < out_size_y; y++){
+        Vec2d az_alt = inverse_project_equirect(0, y);
+        double dx = 2*M_PI*cos(az_alt[1])/out_size_x;
+        int i = 0;
+        for(int x = 0; x < out_size_x; x++){
+            if(total_mask_cpu.at<unsigned char>(y, x) > 0){
+                i++;
+            }
+        }
+        area_tot += out_size_x*dx*dy;
+        area += i*dx*dy;
+        cout << "coverage (at " << az_alt[1]/M_PI*180 << "°): "
+             << area/area_tot*100 << "%, precision: " << area_tot/(4*M_PI)*100 << "%" << endl;
     }
 }
 
@@ -595,6 +621,9 @@ int main(int argc, char *argv[]){
         precalc_brightness_mask(vignette_mask);
     }
     precalc_pixel_grids();
+    if(calculate_coverage){
+        calc_coverage();
+    }
     if(!use_test_images){
         open_cameras();
     }
