@@ -37,6 +37,7 @@ VideoWriter video;
 int selected_device;
 
 const int OUTSIDE_ROI = -1;
+const float pixel_eps = 1e-8;
 
 struct camera{
     cuda::GpuMat src, map_x, map_y, cur_img, dst_roi;
@@ -316,22 +317,55 @@ Vec2d vec_to_pixel(const camera &cam, const Vec3d &vec){
 }
 
 Vec2d inverse_project_equirect(int px, int py){
-    double az = 2*M_PI*double(px)/out_size_x;
-    double alt_norm = double(py)/(out_size_y - 1);
+    double az_norm = (double(px) + 0.5)/out_size_x;
+    double alt_norm = double(py + 0.5)/out_size_y;
     double alt = alt_end*(1.0 - alt_norm) + alt_start*alt_norm;
-    return Vec2d((az - az_offset), alt);
+    return Vec2d(2*M_PI*az_norm - az_offset, alt);
 
 }
 
 Vec2d project_equirect(Vec2d az_alt){
     double alt_norm = (alt_end - az_alt[1])/(alt_end - alt_start);
-    return Vec2d((az_alt[0] + az_offset)*out_size_x/(2*M_PI), alt_norm*(out_size_y - 1));
+    double az_norm = (az_alt[0] + az_offset)/(2*M_PI);
+    return Vec2d(az_norm*out_size_x - 0.5, alt_norm*out_size_y - 0.5);
 }
 
 Vec3d spherical_to_cartesian(Vec2d az_alt){
     return Vec3d(sin(az_alt[0])*cos(az_alt[1]),
                  cos(az_alt[0])*cos(az_alt[1]),
                  sin(az_alt[1]));
+}
+
+int to_pixel(float i, int size){
+    int p = int(round(i));
+    if(p < 0){
+        if(i >= -0.5 - pixel_eps){
+            return 0;
+        }
+        cerr << "pixel coord < -0.5 - pixel_eps" << endl;
+        exit(1);
+    }
+    if(p > size){
+        if(i <= size - 0.5 + pixel_eps){
+            return size - 1;
+        }
+        cerr << "pixel coord > size - 0.5 - pixel_eps" << endl;
+        exit(1);
+    }
+    return p;
+}
+
+Vec2i to_pixel(Vec2d p, Vec2i size){
+    return Vec2i(to_pixel(p[0], size[0]),
+                 to_pixel(p[1], size[1]));
+}
+
+Vec2d wrap_az_coord(Vec2d v){
+    v[0] -= v[0]/(2*M_PI);
+    if(v[0] < 0){
+        v[0] += 2*M_PI;
+    }
+    return v;
 }
 
 void precalc_pixel_grids(){
@@ -348,10 +382,10 @@ void precalc_pixel_grids(){
         }
         Vec2d upper_left = project_equirect(Vec2d(cam.crop_az[0], cam.crop_alt[1]));
         Vec2d lower_right = project_equirect(Vec2d(cam.crop_az[1], cam.crop_alt[0]));
-        cam.upper_left.x = int(ceil(upper_left[0]));
-        cam.upper_left.y = int(ceil(upper_left[1]));
-        cam.lower_right.x = int(floor(lower_right[0]));
-        cam.lower_right.y = int(floor(lower_right[1]));
+        cam.upper_left.x = round(int(upper_left[0]));
+        cam.upper_left.y = round(int(upper_left[1]));
+        cam.lower_right.x = round(int(lower_right[0]));
+        cam.lower_right.y = round(int(lower_right[1]));
         int shift = out_size_x*(cam.upper_left.x/out_size_x);
         cam.lower_right.x -= shift;
         cam.upper_left.x -= shift;
@@ -383,7 +417,6 @@ double calc_brightness_correction_val(int x, int y){
     float yd = (y - (in_size_y - 1)/2.0)/((in_size_x - 1)/2.0);
     float r = sqrt(xd*xd + yd*yd);
     return 1/cos(atan(r/vignette_correction));
-
 }
 
 void precalc_brightness_mask(cuda::GpuMat &mask){
@@ -488,15 +521,13 @@ void draw_background(Mat dst){
     Scalar c(200, 200, 200);
     for(int i = 0; i < 4; i++){
         double az = M_PI_2*i;
-        Point p0(project_equirect(Vec2d(az, alt)));
-        p0.x %= out_size_x;
+        Point p0(to_pixel(project_equirect(Vec2d(az, alt)), Vec2i(out_size_x, out_size_y)));
         line(dst, p0, p0 + Point(0, 35), c, 5, LINE_AA);
         putText(dst, t[i], p0 + Point(-32, 120), FONT_HERSHEY_COMPLEX, 3, c, 5, LINE_AA);
     }
     for(int i = 0; i < 36; i++){
         double az = 2*M_PI*i/36;
-        Point p0(project_equirect(Vec2d(az, alt)));
-        p0.x %= out_size_x;
+        Point p0(to_pixel(project_equirect(Vec2d(az, alt)), Vec2i(out_size_x, out_size_y)));
         line(dst, p0, p0 + Point(0, 20), c, 3, LINE_AA);
     }
 }
