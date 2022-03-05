@@ -98,26 +98,49 @@ void read_config(const string &config_file){
     json config;
     file >> config;
     file.close();
+    if(config["in_size_x"].is_null() || config["in_size_y"].is_null()){
+        cerr << "please specify in_size_x and in_size_y" << endl;
+        exit(1);
+    }
     in_size_x = config["in_size_x"];
     in_size_y = config["in_size_y"];
+    if(config["out_size_x"].is_null() || config["out_size_y"].is_null()){
+        cerr << "please specify out_size_x and out_size_y" << endl;
+        exit(1);
+    }
     out_size_x = config["out_size_x"];
     out_size_y = config["out_size_y"];
-    az_offset = config["az_offset"];
-    use_test_images = config["use_test_images"];
-    verbose_mainloop = config["verbose_mainloop"];
-    selected_device = config["selected_device"];
-    test_mode = config["test_mode"];
+    az_offset = config.value("az_offset", 0);
+    use_test_images = config.value("use_test_images", false);
+    verbose_mainloop = config.value("verbose_mainloop", false);
+    selected_device = config.value("selected_device", 0);
+    test_mode = config.value("test_mode", false);
     if(test_mode){
         test_output_file = config["test_output_file"];
     }
-    alt_start = config["alt_start"];
-    alt_end = config["alt_end"];
-    start_stream = config["start_stream"];
-    fps = config["fps"];
-    vignette_correction = config["vignette_correction"];
-    enable_vignette_correction = config["enable_vignette_correction"];
+    alt_start = config.value("alt_start", -M_PI_2);
+    alt_end = config.value("alt_end", M_PI);
+    start_stream = config.value("start_stream", false);
+    enable_vignette_correction = config.value("enable_vignette_correction", false);
+    if(enable_vignette_correction){
+        vignette_correction = config["vignette_correction"];
+    }
     if(start_stream){
+        if(config["fps"].is_null()){
+            cerr << "please specify the fps" << endl;
+            exit(1);
+        }
+        fps = config["fps"];
+        if(config["rtmp_url_file"].is_null()){
+            cerr << "please specify the rtmp_url_file" << endl;
+            exit(1);
+        }
         string rtmp_url_file = config["rtmp_url_file"];
+        if(config["bitrate"].is_null()){
+            cerr << "please specify the bitrate" << endl;
+            exit(1);
+        }
+        bitrate = config["bitrate"];
         ifstream f(rtmp_url_file);
         if(!f.is_open()){
             cerr << "failed to open file containing rtmp url: " << rtmp_url_file << endl;
@@ -129,7 +152,6 @@ void read_config(const string &config_file){
         rtmp_url = buffer.str();
         trim(rtmp_url);
     }
-    bitrate = config["bitrate"];
     for(auto id : config["active_cams"]){
         cams.push_back(camera(id));
     }
@@ -158,6 +180,11 @@ void read_config(const string &config_file){
             cerr << "no calibration data for camera " << cam.id << endl;
             exit(1);
         }
+        if(cam.calib["fov"][0].is_null() || cam.calib["fov"][1].is_null() ||
+           cam.calib["az"].is_null() || cam.calib["alt"].is_null() || cam.calib["roll"].is_null()){
+            cerr << "cam calibration data malformed" << endl;
+            exit(1);
+        }
         cam.fov_x = cam.calib["fov"][0];
         cam.fov_y = cam.calib["fov"][1];
         cam.az = cam.calib["az"];
@@ -174,12 +201,28 @@ void read_config(const string &config_file){
             exit(1);
         }
         if(use_test_images){
+            if(cam_inf["test_img"].is_null()){
+                cerr << "please specify test_img as a path to the image file when using test images" << endl;
+                exit(1);
+            }
             cam.test_img = cam_inf["test_img"];
         }else{
+            if(cam_inf["url"].is_null()){
+                cerr << "please specify url to the camera when start_stream is true" << endl;
+                exit(1);
+            }
             cam.url = cam_inf["url"];
         }
         for(int i = 0; i < 2; i++){
+            if(cam_inf["crop_az"][i].is_null()){
+                cerr << "please specify crop_az as an array of 2 values" << endl;
+                exit(1);
+            }
             cam.crop_az[i] = cam_inf["crop_az"][i];
+            if(cam_inf["crop_alt"][i].is_null()){
+                cerr << "please specify crop_alt as an array of 2 values" << endl;
+                exit(1);
+            }
             cam.crop_alt[i] = cam_inf["crop_alt"][i];
         }
         if(cam.crop_az[1] < 0){
