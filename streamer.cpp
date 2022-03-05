@@ -23,7 +23,7 @@ typedef Mat_<double> Matd;
 const static string main_config_file = "config.json";
 int in_size_x, in_size_y;
 int out_size_x, out_size_y;
-bool test_mode, start_stream, use_test_images, verbose_mainloop;
+bool start_stream, use_test_images, verbose_mainloop, start_mainloop, show_image, save_image;
 string rtmp_url, test_output_file;
 int fps;
 int bitrate;
@@ -120,8 +120,10 @@ void read_config(const string &config_file){
     use_test_images = config.value("use_test_images", false);
     verbose_mainloop = config.value("verbose_mainloop", false);
     selected_device = config.value("selected_device", 0);
-    test_mode = config.value("test_mode", false);
-    if(test_mode){
+    show_image = config.value("show_image", false);
+    save_image = config.value("save_image", false);
+    start_mainloop = config.value("start_mainloop", true);
+    if(save_image){
         test_output_file = config["test_output_file"];
     }
     alt_start = config.value("alt_start", -M_PI_2);
@@ -645,9 +647,11 @@ int main(int argc, char *argv[]){
     if(start_stream){
         open_pipeline();
     }
-    cout << "starting mainloop" << endl;
+    if(start_mainloop){
+        cout << "starting mainloop" << endl;
+    }
     double tick_freq = getTickFrequency();
-    while(true){
+    do{
         int64 start_frame = getTickCount();
         if(verbose_mainloop){
             cout << "reading frames" << endl;
@@ -663,8 +667,10 @@ int main(int argc, char *argv[]){
         process(dst, dst_buffer, vignette_mask);
         dst.download(dst_cpu);
         int64 process_frames_end = getTickCount();
-        if(test_mode){
+        if(save_image){
             imwrite(test_output_file, dst_cpu);
+        }
+        if(show_image){
             imshow("output", dst_cpu);
             while(waitKey() != 'q');
             destroyAllWindows();
@@ -685,6 +691,6 @@ int main(int argc, char *argv[]){
              << "process:" << setw(6) << 1e3*(process_frames_end - process_frames_start)/tick_freq << " ms, "
              << "write:" << setw(6) << 1e3*(write_frames_end - write_frames_start)/tick_freq << " ms, "
              << "fps:" << setw(6) << fps << endl;
-    }
+    }while(start_mainloop);
     return 0;
 }
