@@ -120,7 +120,7 @@ void read_config(const string &config_file){
         test_output_file = config["test_output_file"];
     }
     alt_start = config.value("alt_start", -M_PI_2);
-    alt_end = config.value("alt_end", M_PI);
+    alt_end = config.value("alt_end", M_PI_2);
     start_stream = config.value("start_stream", false);
     enable_vignette_correction = config.value("enable_vignette_correction", false);
     if(enable_vignette_correction){
